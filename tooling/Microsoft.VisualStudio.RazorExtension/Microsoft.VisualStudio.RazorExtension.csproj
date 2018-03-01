@@ -52,7 +52,7 @@
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE;RAZOR_EXTENSION_DEVELOPER_MODE</DefineConstants>
+    <DefineConstants>DEBUG;TRACE;</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
@@ -68,9 +68,6 @@
     <Compile Include="DocumentInfo\RazorDocumentInfoViewModel.cs" />
     <Compile Include="DocumentInfo\RazorDocumentInfoWindow.cs" />
     <Compile Include="DocumentInfo\RazorDocumentInfoWindowCommand.cs" />
-    <Compile Include="DocumentInfo\RazorDocumentInfoWindowControl.xaml.cs">
-      <DependentUpon>RazorDocumentInfoWindowControl.xaml</DependentUpon>
-    </Compile>
     <Compile Include="RazorInfo\AssemblyViewModel.cs" />
     <Compile Include="Behaviors\ItemSelectedBehavior.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
@@ -134,17 +131,6 @@
     </VSCTCompile>
     <Content Include="Resources\RazorInfoToolWindowCommand.png" />
     <Content Include="Resources\RazorPackage.ico" />
-    <Page Include="RazorInfo\RazorInfoToolWindowControl.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="DocumentInfo\RazorDocumentInfoWindowControl.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Compile Include="RazorInfo\RazorInfoToolWindowControl.xaml.cs">
-      <DependentUpon>RazorInfoToolWindowControl.xaml</DependentUpon>
-    </Compile>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="VSPackage.resx">
@@ -265,11 +251,9 @@
     <SuppressFromVsix Include="System.Xml.XPath.dll" />
     <SuppressFromVsix Include="System.Xml.XPath.XDocument.dll" />
   </ItemGroup>
-
   <Target Name="CopySymbolsToOutput" AfterTargets="Build" Condition="'$(SymbolsPublishDir)' != ''">
     <Copy SourceFiles="$(OutDir)$(AssemblyName).pdb" DestinationFolder="$(SymbolsPublishDir)" />
   </Target>
-
   <!--
     Begin workaround for https://github.com/dotnet/sdk/issues/433
 
