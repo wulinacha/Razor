@@ -4,12 +4,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.TextManager.Interop;
 using Microsoft.VisualStudio.Threading;
+using Microsoft.VSDesigner.Common;
 using Task = System.Threading.Tasks.Task;
 
 namespace Microsoft.VisualStudio.LanguageServices.Razor.ProjectSystem
@@ -52,17 +55,57 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.ProjectSystem
             pSpanToNavigate = null;
             pfWouldNavigate = 0;
 
-            ThreadHelper.JoinableTaskFactory.Run(async () =>
+            var hr = pHierCodeFile.GetCanonicalName(itemidCodeFile, out var filePath);
+            if (ErrorHandler.Failed(hr))
             {
-                await FindNavigibleLocationAsync().ConfigureAwait(false);
+                return hr;
+            }
+
+            var solution = _workspace.CurrentSolution;
+            var ids = solution.GetDocumentIdsWithFilePath(filePath);
+            if (ids.Length != 1)
+            {
+                return VSConstants.E_FAIL;
+            }
+
+            var item = ThreadHelper.JoinableTaskFactory.Run(async () =>
+            {
+                return await FindNavigibleLocationAsync(solution, ids[0], pszRQName).ConfigureAwait(false);
             });
+
+            if (item != null)
+            {
+
+            }
 
             return VSConstants.S_OK;
         }
 
-        private async Task FindNavigibleLocationAsync()
+        private async Task<NavigationItem> FindNavigibleLocationAsync(Solution solution, DocumentId documentId, string rqName)
         {
-            await Task.Delay(0);
+            var project = solution.GetProject(documentId.ProjectId);
+            var document = project.GetDocument(documentId);
+
+            var syntaxTree = await document.GetSyntaxTreeAsync().ConfigureAwait(false);
+            var semanticModel = await document.GetSemanticModelAsync().ConfigureAwait(false);
+
+            var parsed = RQNames.RQNameParser.Parse(rqName);
+
+            var symbolName = "billy";
+            var symbols = semanticModel.Compilation.GetSymbolsWithName(s => s == symbolName, SymbolFilter.All);
+            foreach (var symbol in symbols)
+            {
+                var declarations = symbol.DeclaringSyntaxReferences;
+                foreach (var declaration in declarations)
+                {
+                    if (object.ReferenceEquals(syntaxTree, declaration.SyntaxTree))
+                    {
+                        return new NavigationItem(null, 0, new TextSpan());
+                    }
+                }
+            }
+
+            return null;
         }
 
         private class NavigationItem
