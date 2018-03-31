@@ -3,8 +3,7 @@
 
 namespace Microsoft.VisualStudio.LanguageServices.Razor.RQNames
 {
-    internal abstract class SymbolNameNode
+    internal class ParameterNode
     {
-        public abstract string Name { get; }
     }
 }

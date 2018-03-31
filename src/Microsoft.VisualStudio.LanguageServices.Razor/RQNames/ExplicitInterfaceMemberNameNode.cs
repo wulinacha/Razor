@@ -11,5 +11,7 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.RQNames
         }
 
         public SimpleNameNode SimpleName { get; }
+
+        public override string Name => SimpleName.Text;
     }
 }

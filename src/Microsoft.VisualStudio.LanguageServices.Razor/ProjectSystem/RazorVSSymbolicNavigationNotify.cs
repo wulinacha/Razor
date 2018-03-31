@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -12,7 +14,6 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.TextManager.Interop;
 using Microsoft.VisualStudio.Threading;
-using Microsoft.VSDesigner.Common;
 using Task = System.Threading.Tasks.Task;
 
 namespace Microsoft.VisualStudio.LanguageServices.Razor.ProjectSystem
@@ -52,10 +53,34 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.ProjectSystem
         {
             ppHierToNavigate = null;
             pitemidToNavigate = 0u;
-            pSpanToNavigate = null;
             pfWouldNavigate = 0;
 
             var hr = pHierCodeFile.GetCanonicalName(itemidCodeFile, out var filePath);
+            if (ErrorHandler.Failed(hr))
+            {
+                return hr;
+            }
+
+            // FilePath we want to see looks like: 'c:\<...>\designtimebuild\obj\debug\netcoreapp2.1\razor\views\home\index.g.cshtml.cs'
+            if (!filePath.EndsWith(".g.cshtml.cs"))
+            {
+                return VSConstants.S_OK;
+            }
+            
+            var project = (IVsProject)pHierCodeFile.GetActiveProjectContext();
+            hr = project.GetMkDocument((uint)VSConstants.VSITEMID.Root, out var projectFilePath);
+            if (ErrorHandler.Failed(hr))
+            {
+                return hr;
+            }
+
+            var projectDirectory = Path.GetDirectoryName(projectFilePath);
+            var generatedCodeDirectory = Path.Combine(projectDirectory, "obj\\debug\\netcoreapp2.1\\razor\\");
+
+            var relativePath = filePath.Substring(generatedCodeDirectory.Length);
+            var sourcePath = Path.Combine(projectDirectory, relativePath.Replace(".g.cshtml.cs", ".cshtml"));
+
+            hr = pHierCodeFile.ParseCanonicalName(sourcePath, out var sourceItemId);
             if (ErrorHandler.Failed(hr))
             {
                 return hr;
@@ -75,7 +100,10 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.ProjectSystem
 
             if (item != null)
             {
-
+                ppHierToNavigate = pHierCodeFile;
+                pitemidToNavigate = sourceItemId;
+                pSpanToNavigate[0] = new TextSpan();
+                pfWouldNavigate = 1;
             }
 
             return VSConstants.S_OK;
@@ -89,11 +117,38 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.ProjectSystem
             var syntaxTree = await document.GetSyntaxTreeAsync().ConfigureAwait(false);
             var semanticModel = await document.GetSemanticModelAsync().ConfigureAwait(false);
 
-            var parsed = RQNames.RQNameParser.Parse(rqName);
+            RQNames.RQNameNode parsed;
 
-            var symbolName = "billy";
-            var symbols = semanticModel.Compilation.GetSymbolsWithName(s => s == symbolName, SymbolFilter.All);
-            foreach (var symbol in symbols)
+            try
+            {
+                parsed = RQNames.RQNameParser.Parse(rqName);
+            }
+            catch
+            {
+                Debug.Fail("Unable to parse RQName: " + rqName);
+                throw;
+            }
+
+            string typeName = null;
+            string propertyName = null;
+            if (parsed is RQNames.AggregateNode typeNode)
+            {
+                typeName = typeNode.CombinedName;
+                propertyName = null;
+            }
+            else if (parsed is RQNames.PropertyNode propertyNode)
+            {
+                typeName = propertyNode.Aggregate.CombinedName;
+                propertyName = propertyNode.SymbolName.Name;
+            }
+
+            if (typeName == null)
+            {
+                return null;
+            }
+
+            var symbol = semanticModel.Compilation.GetTypeByMetadataName(typeName);
+            if (symbol != null)
             {
                 var declarations = symbol.DeclaringSyntaxReferences;
                 foreach (var declaration in declarations)

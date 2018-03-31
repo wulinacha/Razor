@@ -74,8 +74,10 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.RQNames
                 // rq_ns := "Ns" "(" rq_sym_name_list ")"
                 Accept(TokenKind.Text, "Ns");
                 Accept(TokenKind.LParen);
+
                 var names = ParseSymbolNameList();
                 Accept(TokenKind.RParen);
+
                 return new NamespaceNode(names);
             }
 
@@ -87,6 +89,7 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.RQNames
 
                 var names = ParseSymbolNameList();
                 Accept(TokenKind.RParen);
+
                 return new AggregateNode(names);
             }
 
@@ -123,28 +126,70 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.RQNames
             private MethodNode ParseMethod()
             {
                 // rq_meth := "Meth" "(" rq_agg "," rq_sym_name "," rq_typevarcount "," rq_params ")"
-                throw new NotImplementedException();
+                Accept(TokenKind.Text, "Meth");
+                Accept(TokenKind.LParen);
+
+                var aggregate = ParseAggregate();
+                Accept(TokenKind.Comma);
+
+                var symbolName = ParseSymbolName();
+                Accept(TokenKind.Comma);
+
+                var typeVariableCount = ParseTypeVariableCount();
+                Accept(TokenKind.Comma);
+
+                var parameters = ParseParameters();
+                Accept(TokenKind.RParen);
+
+                return new MethodNode(aggregate, symbolName, typeVariableCount, parameters);
             }
 
             private PropertyNode ParseProperty()
             {
                 // rq_prop := "Prop" "(" rq_agg "," rq_sym_name "," rq_typevarcount "," rq_params ")"
-                throw new NotImplementedException();
+                Accept(TokenKind.Text, "Prop");
+                Accept(TokenKind.LParen);
+
+                var aggregate = ParseAggregate();
+                Accept(TokenKind.Comma);
+
+                var symbolName = ParseSymbolName();
+                Accept(TokenKind.Comma);
+
+                var typeVariableCount = ParseTypeVariableCount();
+                Accept(TokenKind.Comma);
+
+                var parameters = ParseParameters();
+                Accept(TokenKind.RParen);
+
+                return new PropertyNode(aggregate, symbolName, typeVariableCount, parameters);
             }
 
-            private object ParseParameters()
+            private ParametersNode ParseParameters()
             {
                 // rq_params := "Params" "(" rq_param_list ")"
-                throw new NotImplementedException();
+                Accept(TokenKind.Text, "Params");
+                Accept(TokenKind.LParen);
+
+                var parameterList = ParseParameterList();
+                Accept(TokenKind.RParen);
+
+                return new ParametersNode(parameterList);
             }
 
-            private object ParseParameterList()
+            private List<ParameterNode> ParseParameterList()
             {
                 // rq_param_list := rq_param | rq_param "," rq_param_list
+                if (!Optional(TokenKind.Text))
+                {
+                    // We currently only parse empty parameter lists.
+                    return new List<ParameterNode>();
+                }
+
                 throw new NotImplementedException();
             }
 
-            private object ParseParameter()
+            private ParameterNode ParseParameter()
             {
                 // rq_param:= "Param" "(" rq_type_sig ")"
                 throw new NotImplementedException();
@@ -317,7 +362,13 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.RQNames
             private PropertyNameNode ParsePropertyName()
             {
                 // rq_propname := "PropName" "(" rq_simple_name ")"
-                throw new NotImplementedException();
+                Accept(TokenKind.Text, "PropName");
+                Accept(TokenKind.LParen);
+
+                var simpleName = ParseSimpleName();
+                Accept(TokenKind.RParen);
+
+                return new PropertyNameNode(simpleName);
             }
 
             private EventNameNode ParseEventName()
@@ -420,15 +471,16 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.RQNames
                     {
                     }
 
-                    return new Token(TokenKind.Number, _input.Substring(start, i - start));
+                    return new Token(TokenKind.Number, _input.Substring(start, i - start - 1));
                 }
                 else if (char.IsLetter(c))
                 {
-                    while (i < _input.Length && char.IsLetter(_input[i++]))
+                    while (i < _input.Length && c != '.' && c != ',' && c != '(' && c != ')')
                     {
+                        c = _input[i++];
                     }
 
-                    return new Token(TokenKind.Text, _input.Substring(start, i - start));
+                    return new Token(TokenKind.Text, _input.Substring(start, i - start - 1));
                 }
 
                 return new Token(TokenKind.Invalid);
