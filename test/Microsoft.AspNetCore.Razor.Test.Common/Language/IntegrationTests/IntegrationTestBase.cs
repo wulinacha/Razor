@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Razor.Language.CodeGeneration;
 using Microsoft.AspNetCore.Razor.Language.Intermediate;
 using Xunit;
 using Xunit.Sdk;
+using Microsoft.AspNetCore.Razor.Language.Legacy;
 
 namespace Microsoft.AspNetCore.Razor.Language.IntegrationTests
 {
@@ -195,7 +196,7 @@ namespace Microsoft.AspNetCore.Razor.Language.IntegrationTests
             Assert.Equal(baselineDiagnostics, actualDiagnostics);
         }
 
-        protected void AssertSourceMappingsMatchBaseline(RazorCodeDocument document)
+        protected void AssertSourceMappingsMatchBaseline(RazorCodeDocument codeDocument)
         {
             if (FileName == null)
             {
@@ -203,11 +204,11 @@ namespace Microsoft.AspNetCore.Razor.Language.IntegrationTests
                 throw new InvalidOperationException(message);
             }
 
-            var csharpDocument = document.GetCSharpDocument();
+            var csharpDocument = codeDocument.GetCSharpDocument();
             Assert.NotNull(csharpDocument);
 
             var baselineFileName = Path.ChangeExtension(FileName, ".mappings.txt");
-            var serializedMappings = SourceMappingsSerializer.Serialize(csharpDocument, document.Source);
+            var serializedMappings = SourceMappingsSerializer.Serialize(csharpDocument, codeDocument.Source);
 
             if (GenerateBaselines)
             {
@@ -228,6 +229,67 @@ namespace Microsoft.AspNetCore.Razor.Language.IntegrationTests
             var actual = serializedMappings.Replace("\r", "").Replace("\n", "\r\n");
 
             Assert.Equal(baseline, actual);
+
+            var syntaxTree = codeDocument.GetSyntaxTree();
+            var visitor = new CodeSpanVisitor();
+            visitor.VisitBlock(syntaxTree.Root);
+
+            var charBuffer = new char[codeDocument.Source.Length];
+            codeDocument.Source.CopyTo(0, charBuffer, 0, codeDocument.Source.Length);
+            var sourceContent = new string(charBuffer);
+
+            var spans = visitor.CodeSpans;
+            for (var i= 0; i < spans.Count; i++)
+            {
+                var span = spans[i];
+                if (span.Start.FilePath == null || span.Start.FilePath != codeDocument.Source.FilePath)
+                {
+                    // Not in the main file, skip.
+                    continue;
+                }
+
+                var source = sourceContent.Substring(span.Start.AbsoluteIndex, span.Length);
+                if (string.IsNullOrWhiteSpace(source))
+                {
+                    // We don't care about whitespace.
+                    continue;
+                }
+
+                var found = false;
+                for (var j = 0; j < csharpDocument.SourceMappings.Count; j++)
+                {
+                    var mapping = csharpDocument.SourceMappings[j];
+                    if (mapping.OriginalSpan == new SourceSpan(span.Start, span.Length))
+                    {
+                        var generated = csharpDocument.GeneratedCode.Substring(
+                            mapping.GeneratedSpan.AbsoluteIndex, 
+                            mapping.GeneratedSpan.Length);
+
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    throw new XunitException($"Could not find span.");
+                }
+            }
+        }
+
+        private class CodeSpanVisitor : ParserVisitor
+        {
+            public List<Span> CodeSpans { get; } = new List<Span>();
+
+            public override void VisitSpan(Span span)
+            {
+                if (span.Kind == SpanKindInternal.Code)
+                {
+                    CodeSpans.Add(span);
+                }
+
+                base.VisitSpan(span);
+            }
         }
     }
 }
