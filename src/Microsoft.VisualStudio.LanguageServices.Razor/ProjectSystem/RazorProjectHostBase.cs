@@ -116,7 +116,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                     await UpdateProjectUnsafeAsync(null).ConfigureAwait(false);
 
                     var filePath = CommonServices.UnconfiguredProject.FullPath;
-                    await UpdateProjectUnsafeAsync(new HostProject(filePath, old.Configuration)).ConfigureAwait(false);
+                    await UpdateProjectUnsafeAsync(new HostProject(filePath, old.Configuration, Array.Empty<RazorDocument>())).ConfigureAwait(false);
                 }
             });
         }

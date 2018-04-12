@@ -3,10 +3,11 @@
 
 using System;
 using Microsoft.AspNetCore.Razor.Language;
+using Microsoft.CodeAnalysis.Host;
 
 namespace Microsoft.CodeAnalysis.Razor
 {
-    public interface IProjectEngineFactory
+    public interface IProjectEngineFactory : IWorkspaceService
     {
         RazorProjectEngine Create(RazorConfiguration configuration, RazorProjectFileSystem fileSystem, Action<RazorProjectEngineBuilder> configure);
     }

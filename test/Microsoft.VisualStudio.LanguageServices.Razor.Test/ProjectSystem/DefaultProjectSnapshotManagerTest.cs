@@ -1,6 +1,7 @@
 ﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Moq;
@@ -12,7 +13,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
     {
         public DefaultProjectSnapshotManagerTest()
         {
-            HostProject = new HostProject("Test.csproj", FallbackRazorConfiguration.MVC_2_0);
+            HostProject = new HostProject("Test.csproj", FallbackRazorConfiguration.MVC_2_0, Array.Empty<RazorDocument>());
 
             Workspace = TestWorkspace.Create();
             ProjectManager = new TestProjectSnapshotManager(Dispatcher, Enumerable.Empty<ProjectSnapshotChangeTrigger>(), Workspace);
@@ -114,7 +115,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             ProjectManager.HostProjectAdded(HostProject);
             ProjectManager.Reset();
 
-            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0); // Simulate a project change
+            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0, Array.Empty<RazorDocument>()); // Simulate a project change
 
             // Act
             ProjectManager.HostProjectChanged(project);
@@ -142,7 +143,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             ProjectManager.ProjectUpdated(updateContext);
             ProjectManager.Reset();
 
-            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0); // Simulate a project change
+            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0, Array.Empty<RazorDocument>()); // Simulate a project change
 
             // Act
             ProjectManager.HostProjectChanged(project);
@@ -211,7 +212,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             ProjectManager.WorkspaceProjectAdded(WorkspaceProject);
             ProjectManager.Reset();
 
-            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0); // Simulate a project change
+            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0, Array.Empty<RazorDocument>()); // Simulate a project change
             ProjectManager.HostProjectChanged(project);
             ProjectManager.Reset();
 
@@ -269,7 +270,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             var snapshot = ProjectManager.GetSnapshot(HostProject);
             var updateContext = snapshot.CreateUpdateContext();
 
-            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0); // Simulate a project change
+            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0, Array.Empty<RazorDocument>()); // Simulate a project change
             ProjectManager.HostProjectChanged(project);
             ProjectManager.Reset();
 
@@ -325,7 +326,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             ProjectManager.ProjectUpdated(updateContext);
             ProjectManager.Reset();
 
-            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0); // Simulate a project change
+            var project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_0, Array.Empty<RazorDocument>()); // Simulate a project change
             ProjectManager.HostProjectChanged(project);
             ProjectManager.Reset();
 
@@ -333,7 +334,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             snapshot = ProjectManager.GetSnapshot(HostProject);
             updateContext = snapshot.CreateUpdateContext();
 
-            project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_1); // Simulate a project change
+            project = new HostProject(HostProject.FilePath, FallbackRazorConfiguration.MVC_1_1, Array.Empty<RazorDocument>()); // Simulate a project change
             ProjectManager.HostProjectChanged(project);
             ProjectManager.Reset();
 

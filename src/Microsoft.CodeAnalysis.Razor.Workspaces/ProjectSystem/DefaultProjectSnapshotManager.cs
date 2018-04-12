@@ -151,7 +151,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             // So if possible find a WorkspaceProject.
             var workspaceProject = GetWorkspaceProject(hostProject.FilePath);
 
-            var snapshot = new DefaultProjectSnapshot(hostProject, workspaceProject);
+            var state = new ProjectSnapshotState(Workspace.Services, hostProject, workspaceProject);
+            var snapshot = new DefaultProjectSnapshot(state);
             _projects[hostProject.FilePath] = snapshot;
 
             if (snapshot.IsInitialized && snapshot.IsDirty)
@@ -334,7 +335,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                     return;
                 }
 
-                snapshot = original.RemoveWorkspaceProject();
+                snapshot = original.WithWorkspaceProject(null);
                 _projects[workspaceProject.FilePath] = snapshot;
 
                 // Notify listeners of a change because we've removed computed state.

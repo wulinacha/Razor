@@ -111,7 +111,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                     }
 
                     var configuration = FallbackRazorConfiguration.SelectConfiguration(version);
-                    var hostProject = new HostProject(CommonServices.UnconfiguredProject.FullPath, configuration);
+                    var hostProject = new HostProject(CommonServices.UnconfiguredProject.FullPath, configuration, Array.Empty<RazorDocument>());
                     await UpdateProjectUnsafeAsync(hostProject).ConfigureAwait(false);
                 });
             }, registerFaultHandler: true);
