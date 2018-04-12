@@ -32,7 +32,7 @@ namespace Microsoft.VisualStudio.Editor.Razor
         private readonly VisualStudioCompletionBroker _completionBroker;
         private readonly VisualStudioDocumentTracker _documentTracker;
         private readonly ForegroundDispatcher _dispatcher;
-        private readonly RazorProjectEngineFactoryService _projectEngineFactory;
+        private readonly ProjectSnapshotProjectEngineFactory _projectEngineFactory;
         private readonly ErrorReporter _errorReporter;
         private RazorSyntaxTreePartialParser _partialParser;
         private RazorProjectEngine _projectEngine;
@@ -50,7 +50,7 @@ namespace Microsoft.VisualStudio.Editor.Razor
         public DefaultVisualStudioRazorParser(
             ForegroundDispatcher dispatcher,
             VisualStudioDocumentTracker documentTracker,
-            RazorProjectEngineFactoryService projectEngineFactory,
+            ProjectSnapshotProjectEngineFactory projectEngineFactory,
             ErrorReporter errorReporter,
             VisualStudioCompletionBroker completionBroker)
         {
@@ -172,11 +172,13 @@ namespace Microsoft.VisualStudio.Editor.Razor
         {
             _dispatcher.AssertForegroundThread();
 
-            var projectDirectory = Path.GetDirectoryName(_documentTracker.ProjectPath);
-            _projectEngine = _projectEngineFactory.Create(projectDirectory, ConfigureProjectEngine);
-
             // Make sure any tests use the real thing or a good mock. These tests can cause failures
             // that are hard to understand when this throws.
+            Debug.Assert(_documentTracker.IsSupportedProject);
+            Debug.Assert(_documentTracker.ProjectSnapshot != null);
+
+            _projectEngine = _projectEngineFactory.Create(_documentTracker.ProjectSnapshot, ConfigureProjectEngine);
+
             Debug.Assert(_projectEngine != null); 
             Debug.Assert(_projectEngine.Engine != null);
             Debug.Assert(_projectEngine.FileSystem != null);
@@ -184,6 +186,7 @@ namespace Microsoft.VisualStudio.Editor.Razor
             // This is still exposed and used by WTE in 15.7
             _templateEngine = new DelegatingTemplateEngine(_projectEngine);
 
+            var projectDirectory = Path.GetDirectoryName(_documentTracker.ProjectPath);
             _parser = new BackgroundParser(_projectEngine, FilePath, projectDirectory);
             _parser.ResultsReady += OnResultsReady;
             _parser.Start();

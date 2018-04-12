@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -55,6 +56,8 @@ namespace Microsoft.CodeAnalysis.Remote.Razor
 
             public override RazorConfiguration Configuration { get; }
 
+            public override IEnumerable<string> DocumentFilePaths => Array.Empty<string>();
+
             public override string FilePath { get; }
 
             public override bool IsInitialized { get; }
@@ -62,6 +65,31 @@ namespace Microsoft.CodeAnalysis.Remote.Razor
             public override VersionStamp Version { get; }
 
             public override Project WorkspaceProject { get; }
+
+            public override DocumentSnapshot GetDocument(string filePath)
+            {
+                if (filePath == null)
+                {
+                    throw new ArgumentNullException(nameof(filePath));
+                }
+
+                return null;
+            }
+
+            public override RazorProjectEngine GetProjectEngine()
+            {
+                throw new NotImplementedException();
+            }
+
+            public override Task<IReadOnlyList<TagHelperDescriptor>> GetTagHelpersAsync()
+            {
+                throw new NotImplementedException();
+            }
+
+            public override bool TryGetTagHelpers(out IReadOnlyList<TagHelperDescriptor> results)
+            {
+                throw new NotImplementedException();
+            }
         }
     }
 }

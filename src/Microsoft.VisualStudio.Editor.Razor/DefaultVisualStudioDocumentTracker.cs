@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Razor;
@@ -24,8 +26,14 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
         private readonly List<ITextView> _textViews;
         private readonly Workspace _workspace;
         private bool _isSupportedProject;
-        private ProjectSnapshot _project;
+        private ProjectSnapshot _projectSnapshot;
         private string _projectPath;
+
+        // Only allow a single tag helper computation task at a time.
+        private (ProjectSnapshot project, Task task) _computingTagHelpers;
+
+        // Stores the result from the last time we computed tag helpers.
+        private IReadOnlyList<TagHelperDescriptor> _tagHelpers;
 
         public override event EventHandler<ContextChangeEventArgs> ContextChanged;
 
@@ -75,17 +83,23 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
             _workspace = workspace; // For now we assume that the workspace is the always default VS workspace.
 
             _textViews = new List<ITextView>();
+            _tagHelpers = Array.Empty<TagHelperDescriptor>();
         }
 
-        public override RazorConfiguration Configuration => _project.Configuration;
+        public override RazorConfiguration Configuration => _projectSnapshot.Configuration;
 
         public override EditorSettings EditorSettings => _editorSettingsManager.Current;
 
-        public override IReadOnlyList<TagHelperDescriptor> TagHelpers => Array.Empty<TagHelperDescriptor>();
+        public override IReadOnlyList<TagHelperDescriptor> TagHelpers => _tagHelpers;
 
         public override bool IsSupportedProject => _isSupportedProject;
 
-        public override Project Project => _workspace.CurrentSolution.GetProject(_project.WorkspaceProject.Id);
+        public override Project Project =>
+            _projectSnapshot.WorkspaceProject == null ?
+            null :
+            _workspace.CurrentSolution.GetProject(_projectSnapshot.WorkspaceProject.Id);
+
+        internal override ProjectSnapshot ProjectSnapshot => _projectSnapshot;
 
         public override ITextBuffer TextBuffer => _textBuffer;
 
@@ -96,6 +110,8 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
         public override string FilePath => _filePath;
 
         public override string ProjectPath => _projectPath;
+
+        public Task PendingTagHelperTask => _computingTagHelpers.task ?? Task.CompletedTask;
 
         internal void AddTextView(ITextView textView)
         {
@@ -174,11 +190,11 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
 
             _isSupportedProject = isSupportedProject;
             _projectPath = projectPath;
-            _project = _projectManager.GetProjectWithFilePath(projectPath);
+            _projectSnapshot = _projectManager.GetOrCreateProject(projectPath);
             _projectManager.Changed += ProjectManager_Changed;
             _editorSettingsManager.Changed += EditorSettingsManager_Changed;
 
-            OnContextChanged(_project, ContextChangeKind.ProjectChanged);
+            OnContextChanged(ContextChangeKind.ProjectChanged);
         }
 
         private void Unsubscribe()
@@ -188,41 +204,113 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
 
             // Detached from project.
             _isSupportedProject = false;
-            _project = null;
-            OnContextChanged(project: null, kind: ContextChangeKind.ProjectChanged);
+            _projectSnapshot = null;
+            OnContextChanged(kind: ContextChangeKind.ProjectChanged);
         }
 
-        private void OnContextChanged(ProjectSnapshot project, ContextChangeKind kind)
+        private void StartComputingTagHelpers()
         {
-            _project = project;
+            Debug.Assert(_projectSnapshot != null);
+            Debug.Assert(_computingTagHelpers.project == null && _computingTagHelpers.task == null);
 
+            if (_projectSnapshot.TryGetTagHelpers(out var results))
+            {
+                _tagHelpers = results;
+                OnContextChanged(ContextChangeKind.TagHelpersChanged);
+                return;
+            }
+
+            // if we get here then we know the tag helpers aren't available, so force async for ease of testing
+            var task = _projectSnapshot
+                .GetTagHelpersAsync()
+                .ContinueWith(TagHelpersUpdated, TaskContinuationOptions.RunContinuationsAsynchronously);
+            _computingTagHelpers = (_projectSnapshot, task);
+        }
+
+        private void TagHelpersUpdated(Task<IReadOnlyList<TagHelperDescriptor>> task)
+        {
+            Debug.Assert(_computingTagHelpers.project != null && _computingTagHelpers.task != null);
+
+            if (!_isSupportedProject)
+            {
+                return;
+            }
+
+            _tagHelpers = task.Exception == null ? task.Result : Array.Empty<TagHelperDescriptor>();
+            OnContextChanged(ContextChangeKind.TagHelpersChanged);
+
+            var projectHasChanges = _projectSnapshot != null && _projectSnapshot != _computingTagHelpers.project;
+            _computingTagHelpers = (null, null);
+
+            if (projectHasChanges)
+            {
+                // More changes, keep going.
+                StartComputingTagHelpers();
+            }
+        }
+
+        private void OnContextChanged(ContextChangeKind kind)
+        {
             var handler = ContextChanged;
             if (handler != null)
             {
                 handler(this, new ContextChangeEventArgs(kind));
+            }
+
+            if (kind == ContextChangeKind.ProjectChanged && 
+                _projectSnapshot != null &&
+                _computingTagHelpers.project == null)
+            {
+                StartComputingTagHelpers();
             }
         }
 
         private void ProjectManager_Changed(object sender, ProjectChangeEventArgs e)
         {
             if (_projectPath != null &&
-                string.Equals(_projectPath, e.Project.FilePath, StringComparison.OrdinalIgnoreCase))
+                string.Equals(_projectPath, e.ProjectFilePath, StringComparison.OrdinalIgnoreCase))
             {
-                if (e.Kind == ProjectChangeKind.TagHelpersChanged)
+                // This will be the new snapshot unless the project was removed.
+                _projectSnapshot = _projectManager.GetLoadedProject(e.ProjectFilePath);
+
+                switch (e.Kind)
                 {
-                    OnContextChanged(e.Project, ContextChangeKind.TagHelpersChanged);
-                }
-                else
-                {
-                    OnContextChanged(e.Project, ContextChangeKind.ProjectChanged);
+                    case ProjectChangeKind.DocumentsChanged:
+
+                        // Nothing to do.
+                        break;
+
+                    case ProjectChangeKind.ProjectAdded:
+                    case ProjectChangeKind.ProjectChanged:
+
+                        // Just an update
+                        OnContextChanged(ContextChangeKind.ProjectChanged);
+                        break;
+
+                    case ProjectChangeKind.ProjectRemoved:
+
+                        // Fall back to ephemeral project
+                        _projectSnapshot = _projectManager.GetOrCreateProject(ProjectPath);
+                        OnContextChanged(ContextChangeKind.ProjectChanged);
+                        break;
+
+                    case ProjectChangeKind.DocumentContentChanged:
+
+                        // Do nothing
+                        break;
+
+                    default:
+                        throw new InvalidOperationException($"Unknown ProjectChangeKind {e.Kind}");
                 }
             }
+
+            Debug.Assert(_projectSnapshot != null);
         }
 
         // Internal for testing
         internal void EditorSettingsManager_Changed(object sender, EditorSettingsChangedEventArgs args)
         {
-            OnContextChanged(_project, ContextChangeKind.EditorSettingsChanged);
+            OnContextChanged(ContextChangeKind.EditorSettingsChanged);
         }
     }
 }

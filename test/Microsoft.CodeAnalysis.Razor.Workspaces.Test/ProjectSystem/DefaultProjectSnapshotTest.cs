@@ -1,57 +1,120 @@
 ﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Razor.Language;
+using Microsoft.CodeAnalysis.Host;
 using Xunit;
 
 namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 {
     public class DefaultProjectSnapshotTest
     {
-        [Fact]
-        public void WithWorkspaceProject_CreatesSnapshot_UpdatesUnderlyingProject()
+        public DefaultProjectSnapshotTest()
         {
-            // Arrange
-            var hostProject = new HostProject("Test.cshtml", FallbackRazorConfiguration.MVC_2_0);
-            var workspaceProject = GetWorkspaceProject("Test1");
-            var original = new DefaultProjectSnapshot(hostProject, workspaceProject);
+            TagHelperResolver = new TestTagHelperResolver();
 
-            var anotherProject = GetWorkspaceProject("Test1");
+            HostServices = TestServices.Create(
+                new IWorkspaceService[]
+                {
+                    new TestProjectSnapshotProjectEngineFactory(),
+                },
+                new ILanguageService[]
+                {
+                    TagHelperResolver,
+                });
 
-            // Act
-            var snapshot = original.WithWorkspaceProject(anotherProject);
+            HostProject = new HostProject("c:\\MyProject\\Test.csproj", FallbackRazorConfiguration.MVC_2_0);
+            HostProjectWithConfigurationChange = new HostProject("c:\\MyProject\\Test.csproj", FallbackRazorConfiguration.MVC_1_0);
 
-            // Assert
-            Assert.Same(anotherProject, snapshot.WorkspaceProject);
-            Assert.Equal(original.ComputedVersion, snapshot.ComputedVersion);
-            Assert.Equal(original.Configuration, snapshot.Configuration);
-        }
+            Workspace = TestWorkspace.Create(HostServices);
 
-        [Fact]
-        public void WithProjectChange_WithProject_CreatesSnapshot_UpdatesValues()
-        {
-            // Arrange
-            var hostProject = new HostProject("Test.cshtml", FallbackRazorConfiguration.MVC_2_0);
-            var workspaceProject = GetWorkspaceProject("Test1");
-            var original = new DefaultProjectSnapshot(hostProject, workspaceProject);
+            var projectId = ProjectId.CreateNewId("Test");
+            var solution = Workspace.CurrentSolution.AddProject(ProjectInfo.Create(
+                projectId,
+                VersionStamp.Default,
+                "Test",
+                "Test",
+                LanguageNames.CSharp,
+                "c:\\MyProject\\Test.csproj"));
+            WorkspaceProject = solution.GetProject(projectId);
 
-            var anotherProject = GetWorkspaceProject("Test1");
-            var update = new ProjectSnapshotUpdateContext(original.FilePath, hostProject, anotherProject, original.Version);
+            SomeTagHelpers = new List<TagHelperDescriptor>();
+            SomeTagHelpers.Add(TagHelperDescriptorBuilder.Create("Test1", "TestAssembly").Build());
 
-            // Act
-            var snapshot = original.WithComputedUpdate(update);
-
-            // Assert
-            Assert.Same(original.WorkspaceProject, snapshot.WorkspaceProject);
-        }
-
-        private Project GetWorkspaceProject(string name)
-        {
-            Project project = null;
-            TestWorkspace.Create(workspace =>
+            Documents = new HostDocument[]
             {
-                project = workspace.AddProject(name, LanguageNames.CSharp);
-            });
-            return project;
+                new HostDocument("c:\\MyProject\\File.cshtml", "File.cshtml"),
+                new HostDocument("c:\\MyProject\\Index.cshtml", "Index.cshtml"),
+
+                // linked file
+                new HostDocument("c:\\SomeOtherProject\\Index.cshtml", "Pages\\Index.cshtml"),
+            };
+        }
+
+        private HostDocument[] Documents { get; }
+
+        private HostProject HostProject { get; }
+
+        private HostProject HostProjectWithConfigurationChange { get; }
+
+        private Project WorkspaceProject { get; }
+
+        private TestTagHelperResolver TagHelperResolver { get; }
+
+        private HostServices HostServices { get; }
+
+        private Workspace Workspace { get; }
+
+        private List<TagHelperDescriptor> SomeTagHelpers { get; }
+
+        [Fact]
+        public void ProjectSnapshot_CachesDocumentSnapshots()
+        {
+            // Arrange
+            var state = new ProjectState(Workspace.Services, HostProject, WorkspaceProject)
+                .AddHostDocument(Documents[0])
+                .AddHostDocument(Documents[1])
+                .AddHostDocument(Documents[2]);
+            var snapshot = new DefaultProjectSnapshot(state);
+
+            // Act
+            var documents = snapshot.DocumentFilePaths.ToDictionary(f => f, f => snapshot.GetDocument(f));
+
+            // Assert
+            Assert.Collection(
+                documents,
+                d => Assert.Same(d.Value, snapshot.GetDocument(d.Key)),
+                d => Assert.Same(d.Value, snapshot.GetDocument(d.Key)),
+                d => Assert.Same(d.Value, snapshot.GetDocument(d.Key)));
+        }
+
+        [Fact]
+        public void ProjectSnapshot_CachesTagHelperTask()
+        {
+            // Arrange
+            TagHelperResolver.CompletionSource = new TaskCompletionSource<TagHelperResolutionResult>();
+
+            try
+            {
+                var state = new ProjectState(Workspace.Services, HostProject, WorkspaceProject);
+                var snapshot = new DefaultProjectSnapshot(state);
+
+                // Act
+                var task1 = snapshot.GetTagHelpersAsync();
+                var task2 = snapshot.GetTagHelpersAsync();
+
+                // Assert
+                Assert.Same(task1, task2);
+            }
+            finally
+            {
+                TagHelperResolver.CompletionSource.SetCanceled();
+            }
         }
     }
 }

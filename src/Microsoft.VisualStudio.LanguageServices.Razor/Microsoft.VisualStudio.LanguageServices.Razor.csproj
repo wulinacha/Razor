@@ -53,6 +53,7 @@
     <None Include="ProjectSystem\Rules\RazorConfiguration.xaml" />
     <None Include="ProjectSystem\Rules\RazorExtension.xaml" />
     <None Include="ProjectSystem\Rules\RazorGeneral.xaml" />
+    <None Include="ProjectSystem\Rules\RazorGenerateWithTargetPath.xaml" />
     <Compile Update="ProjectSystem\Rules\RazorConfiguration.cs">
       <DependentUpon>RazorConfiguration.xaml</DependentUpon>
     </Compile>
@@ -62,6 +63,9 @@
     <Compile Update="ProjectSystem\Rules\RazorGeneral.cs">
       <DependentUpon>RazorGeneral.xaml</DependentUpon>
     </Compile>
+    <Compile Update="ProjectSystem\Rules\RazorGenerateWithTargetPath.cs">
+      <DependentUpon>RazorGenerateWithTargetPath.xaml</DependentUpon>
+    </Compile>
     <EmbeddedResource Include="ProjectSystem\Rules\RazorConfiguration.xaml">
       <LogicalName>XamlRuleToCode:RazorConfiguration.xaml</LogicalName>
     </EmbeddedResource>
@@ -70,6 +74,9 @@
     </EmbeddedResource>
     <EmbeddedResource Include="ProjectSystem\Rules\RazorGeneral.xaml">
       <LogicalName>XamlRuleToCode:RazorGeneral.xaml</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="ProjectSystem\Rules\RazorGenerateWithTargetPath.xaml">
+      <LogicalName>XamlRuleToCode:RazorGenerateWithTargetPath.xaml</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildRuntimeType)'!='Core'">
@@ -95,15 +102,13 @@
       <RuleInjectionClassName>RazorProjectProperties</RuleInjectionClassName>
       <OutputPath>ProjectSystem\Rules\</OutputPath>
     </XamlPropertyRule>
-    <Compile Update="ProjectSystem\Rules\RazorConfiguration.cs">
-      <DependentUpon>RazorGeneral.xaml</DependentUpon>
-    </Compile>
-    <Compile Update="ProjectSystem\Rules\RazorExtension.cs">
-      <DependentUpon>RazorGeneral.xaml</DependentUpon>
-    </Compile>
-    <Compile Update="ProjectSystem\Rules\RazorGeneral.cs">
-      <DependentUpon>RazorGeneral.xaml</DependentUpon>
-    </Compile>
+    <XamlPropertyRule Include="ProjectSystem\Rules\RazorGenerateWithTargetPath.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:GenerateRuleSourceFromXaml</Generator>
+      <Namespace>Microsoft.CodeAnalysis.Razor.ProjectSystem.Rules</Namespace>
+      <RuleInjectionClassName>RazorProjectProperties</RuleInjectionClassName>
+      <OutputPath>ProjectSystem\Rules\</OutputPath>
+    </XamlPropertyRule>
   </ItemGroup>
 
   <!--
