@@ -2,7 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.Composition;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -57,7 +59,13 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 receiver,
                 initialDataAsNew: true,
                 suppressVersionOnlyUpdates: true,
-                ruleNames: new string[] { Rules.RazorGeneral.SchemaName, Rules.RazorConfiguration.SchemaName, Rules.RazorExtension.SchemaName });
+                ruleNames: new string[] 
+                {
+                    Rules.RazorGeneral.SchemaName,
+                    Rules.RazorConfiguration.SchemaName,
+                    Rules.RazorExtension.SchemaName,
+                    Rules.RazorGenerateWithTargetPath.SchemaName,
+                });
         }
 
         protected override async Task DisposeCoreAsync(bool initialized)
@@ -82,33 +90,11 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             {
                 await ExecuteWithLock(async () =>
                 {
-                    var languageVersion = update.Value.CurrentState[Rules.RazorGeneral.SchemaName].Properties[Rules.RazorGeneral.RazorLangVersionProperty];
-                    var defaultConfiguration = update.Value.CurrentState[Rules.RazorGeneral.SchemaName].Properties[Rules.RazorGeneral.RazorDefaultConfigurationProperty];
-
                     RazorConfiguration configuration = null;
-                    if (!string.IsNullOrEmpty(languageVersion) && !string.IsNullOrEmpty(defaultConfiguration))
+                    if (TryGetLangaugeVersion(update.Value, out var languageVersion) &&
+                        TryGetDefaultConfigurationName(update.Value, out var defaultConfiguration))
                     {
-                        if (!RazorLanguageVersion.TryParse(languageVersion, out var parsedVersion))
-                        {
-                            parsedVersion = RazorLanguageVersion.Latest;
-                        }
-
-                        var extensions = update.Value.CurrentState[Rules.RazorExtension.PrimaryDataSourceItemType].Items.Select(e =>
-                        {
-                            return new ProjectSystemRazorExtension(e.Key);
-                        }).ToArray();
-
-                        var configurations = update.Value.CurrentState[Rules.RazorConfiguration.PrimaryDataSourceItemType].Items.Select(c =>
-                        {
-                            var includedExtensions = c.Value[Rules.RazorConfiguration.ExtensionsProperty]
-                                .Split(';')
-                                .Select(name => extensions.Where(e => e.ExtensionName == name).FirstOrDefault())
-                                .Where(e => e != null)
-                                .ToArray();
-
-                            return new ProjectSystemRazorConfiguration(parsedVersion, c.Key, includedExtensions);
-                        }).ToArray();
-
+                        var configurations = GetConfigurations(update.Value, languageVersion);
                         configuration = configurations.Where(c => c.ConfigurationName == defaultConfiguration).FirstOrDefault();
                     }
 
@@ -119,10 +105,107 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                         return;
                     }
 
-                    var hostProject = new HostProject(CommonServices.UnconfiguredProject.FullPath, configuration);
+                    var documents = GetDocuments(update.Value);
+                    var hostProject = new HostProject(CommonServices.UnconfiguredProject.FullPath, configuration, documents);
                     await UpdateProjectUnsafeAsync(hostProject).ConfigureAwait(false);
                 });
             }, registerFaultHandler: true);
+        }
+
+        private static bool TryGetLangaugeVersion(IProjectSubscriptionUpdate update, out RazorLanguageVersion version)
+        {
+            if (update.CurrentState.TryGetValue(Rules.RazorGeneral.SchemaName, out var rule) &&
+                rule.Properties.TryGetValue(Rules.RazorGeneral.RazorLangVersionProperty, out var text) &&
+                !string.IsNullOrWhiteSpace(text))
+            {
+                if (!RazorLanguageVersion.TryParse(text, out version))
+                {
+                    version = RazorLanguageVersion.Latest;
+                }
+
+                return true;
+            }
+
+            version = null;
+            return false;
+        }
+
+        private static bool TryGetDefaultConfigurationName(IProjectSubscriptionUpdate update, out string configurationName)
+        {
+            if (update.CurrentState.TryGetValue(Rules.RazorGeneral.SchemaName, out var rule) &&
+                rule.Properties.TryGetValue(Rules.RazorGeneral.RazorDefaultConfigurationProperty, out var text) &&
+                !string.IsNullOrWhiteSpace(text))
+            {
+                configurationName = text;
+                return true;
+            }
+
+            configurationName = null;
+            return false;
+        }
+
+        private static RazorConfiguration[] GetConfigurations(IProjectSubscriptionUpdate update, RazorLanguageVersion languageVersion)
+        {
+            if (!update.CurrentState.TryGetValue(Rules.RazorExtension.SchemaName, out var extensionRule) ||
+                !update.CurrentState.TryGetValue(Rules.RazorConfiguration.SchemaName, out var configurationRule))
+            {
+                return Array.Empty<RazorConfiguration>();
+            }
+            
+            var extensions = new List<RazorExtension>();
+            foreach (var kvp in extensionRule.Items)
+            {
+                if (!string.IsNullOrEmpty(kvp.Key))
+                {
+                    extensions.Add(new ProjectSystemRazorExtension(kvp.Key));
+                }
+            }
+
+            var configurations = new List<RazorConfiguration>();
+            foreach (var kvp in configurationRule.Items)
+            {
+                var configurationName = kvp.Key;
+                if (string.IsNullOrWhiteSpace(configurationName))
+                {
+                    continue;
+                }
+
+                var includedExtensions = Array.Empty<RazorExtension>();
+                if (kvp.Value.TryGetValue(Rules.RazorConfiguration.ExtensionsProperty, out var text))
+                {
+                    includedExtensions = text
+                        .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(name => extensions.Where(e => e.ExtensionName == name).FirstOrDefault())
+                        .Where(e => e != null)
+                        .ToArray();
+                }
+
+                configurations.Add(new ProjectSystemRazorConfiguration(languageVersion, configurationName, includedExtensions));
+            }
+
+            return configurations.ToArray();
+        }
+
+        private RazorDocument[] GetDocuments(IProjectSubscriptionUpdate update)
+        {
+            if (!update.CurrentState.TryGetValue(Rules.RazorGenerateWithTargetPath.SchemaName, out var rule))
+            {
+                return Array.Empty<RazorDocument>();
+            }
+
+            var documents = new List<RazorDocument>();
+            foreach (var kvp in rule.Items)
+            {
+                if ( kvp.Value.TryGetValue(Rules.RazorGenerateWithTargetPath.TargetPathProperty, out var targetPath) &&
+                    !string.IsNullOrWhiteSpace(kvp.Key) &&
+                    !string.IsNullOrWhiteSpace(targetPath))
+                {
+                    var filePath = CommonServices.UnconfiguredProject.MakeRooted(kvp.Key);
+                    documents.Add(new ProjectSystemRazorDocument(filePath, targetPath));
+                }
+            }
+
+            return documents.ToArray();
         }
     }
 }

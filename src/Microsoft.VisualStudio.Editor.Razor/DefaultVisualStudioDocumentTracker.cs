@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Razor;
@@ -24,7 +25,7 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
         private readonly List<ITextView> _textViews;
         private readonly Workspace _workspace;
         private bool _isSupportedProject;
-        private ProjectSnapshot _project;
+        private ProjectSnapshot _projectSnapshot;
         private string _projectPath;
 
         public override event EventHandler<ContextChangeEventArgs> ContextChanged;
@@ -77,7 +78,7 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
             _textViews = new List<ITextView>();
         }
 
-        public override RazorConfiguration Configuration => _project.Configuration;
+        public override RazorConfiguration Configuration => _projectSnapshot.Configuration;
 
         public override EditorSettings EditorSettings => _editorSettingsManager.Current;
 
@@ -85,7 +86,12 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
 
         public override bool IsSupportedProject => _isSupportedProject;
 
-        public override Project Project => _workspace.CurrentSolution.GetProject(_project.WorkspaceProject.Id);
+        public override Project Project =>
+            _projectSnapshot.WorkspaceProject == null ?
+            null :
+            _workspace.CurrentSolution.GetProject(_projectSnapshot.WorkspaceProject.Id);
+
+        internal override ProjectSnapshot ProjectSnapshot => _projectSnapshot;
 
         public override ITextBuffer TextBuffer => _textBuffer;
 
@@ -174,11 +180,11 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
 
             _isSupportedProject = isSupportedProject;
             _projectPath = projectPath;
-            _project = _projectManager.GetProjectWithFilePath(projectPath);
+            _projectSnapshot = _projectManager.GetOrCreateProject(projectPath);
             _projectManager.Changed += ProjectManager_Changed;
             _editorSettingsManager.Changed += EditorSettingsManager_Changed;
 
-            OnContextChanged(_project, ContextChangeKind.ProjectChanged);
+            OnContextChanged(ContextChangeKind.ProjectChanged);
         }
 
         private void Unsubscribe()
@@ -188,14 +194,12 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
 
             // Detached from project.
             _isSupportedProject = false;
-            _project = null;
-            OnContextChanged(project: null, kind: ContextChangeKind.ProjectChanged);
+            _projectSnapshot = null;
+            OnContextChanged(kind: ContextChangeKind.ProjectChanged);
         }
 
-        private void OnContextChanged(ProjectSnapshot project, ContextChangeKind kind)
+        private void OnContextChanged(ContextChangeKind kind)
         {
-            _project = project;
-
             var handler = ContextChanged;
             if (handler != null)
             {
@@ -208,21 +212,48 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor.Editor
             if (_projectPath != null &&
                 string.Equals(_projectPath, e.Project.FilePath, StringComparison.OrdinalIgnoreCase))
             {
-                if (e.Kind == ProjectChangeKind.TagHelpersChanged)
+                // This will be the new snapshot unless the project was removed.
+                _projectSnapshot = e.Project;
+
+                switch (e.Kind)
                 {
-                    OnContextChanged(e.Project, ContextChangeKind.TagHelpersChanged);
-                }
-                else
-                {
-                    OnContextChanged(e.Project, ContextChangeKind.ProjectChanged);
+                    case ProjectChangeKind.DocumentsChanged:
+
+                        // Nothing to do.
+                        break;
+
+                    case ProjectChangeKind.ProjectAdded:
+                    case ProjectChangeKind.ProjectChanged:
+
+                        // Just an update
+                        OnContextChanged(ContextChangeKind.ProjectChanged);
+                        break;
+
+                    case ProjectChangeKind.ProjectRemoved:
+
+                        // Fall back to ephemeral project
+                        _projectSnapshot = _projectManager.GetOrCreateProject(ProjectPath);
+                        OnContextChanged(ContextChangeKind.ProjectChanged);
+                        break;
+
+                    case ProjectChangeKind.TagHelpersChanged:
+
+                        // Just an update.
+                        OnContextChanged(ContextChangeKind.TagHelpersChanged);
+                        break;
+
+                    default:
+                        throw new InvalidOperationException($"Unknown ProjectChangeKind {e.Kind}");
                 }
             }
+
+            Debug.Assert(_projectSnapshot != null);
         }
 
         // Internal for testing
         internal void EditorSettingsManager_Changed(object sender, EditorSettingsChangedEventArgs args)
         {
-            OnContextChanged(_project, ContextChangeKind.EditorSettingsChanged);
+            OnContextChanged(ContextChangeKind.EditorSettingsChanged);
         }
     }
 }

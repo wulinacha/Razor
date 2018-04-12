@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.AspNetCore.Razor.Language;
 
 namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
@@ -16,63 +18,61 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
     // at once. 
     internal class DefaultProjectSnapshot : ProjectSnapshot
     {
-        public DefaultProjectSnapshot(HostProject hostProject, Project workspaceProject, VersionStamp? version = null)
+        private readonly Lazy<RazorProjectEngine> _projectEngine;
+        private ProjectSnapshotComputedState _computedState;
+
+        public DefaultProjectSnapshot(ProjectSnapshotState state)
         {
-            if (hostProject == null)
+            if (state == null)
             {
-                throw new ArgumentNullException(nameof(hostProject));
+                throw new ArgumentNullException(nameof(state));
             }
 
-            HostProject = hostProject;
-            WorkspaceProject = workspaceProject; // Might be null
+            State = state;
+            _projectEngine = new Lazy<RazorProjectEngine>(CreateProjectEngine);
+        }
+
+        public DefaultProjectSnapshot(ProjectSnapshotState state, DefaultProjectSnapshot other, ProjectSnapshotStateDifference difference)
+        {
+            if (state == null)
+            {
+                throw new ArgumentNullException(nameof(state));
+            }
+
+            if (other == null)
+            {
+                throw new ArgumentNullException(nameof(other));
+            }
+
+            State = state;
             
-            FilePath = hostProject.FilePath;
-            Version = version ?? VersionStamp.Default;
+            if ((difference & ProjectSnapshotStateDifference.ConfigurationChanged) == 0)
+            {
+                // Use cached project engine if the configuration hasn't changed.
+                _projectEngine = other._projectEngine;
+            }
+            else
+            {
+                _projectEngine = new Lazy<RazorProjectEngine>(CreateProjectEngine);
+            }
+
+            if (other._computedState != null)
+            {
+                if (difference == ProjectSnapshotStateDifference.None ||
+                    difference == ProjectSnapshotStateDifference.DocumentsChanged)
+                {
+                    // Keep the computed state and mark up-to-date to date if possible.
+                    _computedState = new ProjectSnapshotComputedState(other._computedState, Version);
+                }
+                else if (difference == ProjectSnapshotStateDifference.WorkspaceProjectChanged)
+                {
+                    // Keep the computed state, but still dirty
+                    _computedState = other._computedState;
+                }
+            }
         }
 
-        private DefaultProjectSnapshot(HostProject hostProject, DefaultProjectSnapshot other)
-        {
-            if (hostProject == null)
-            {
-                throw new ArgumentNullException(nameof(hostProject));
-            }
-
-            if (other == null)
-            {
-                throw new ArgumentNullException(nameof(other));
-            }
-
-            HostProject = hostProject;
-
-            ComputedVersion = other.ComputedVersion;
-            FilePath = other.FilePath;
-            WorkspaceProject = other.WorkspaceProject;
-
-            Version = other.Version.GetNewerVersion();
-        }
-
-        private DefaultProjectSnapshot(Project workspaceProject, DefaultProjectSnapshot other)
-        {
-            if (workspaceProject == null)
-            {
-                throw new ArgumentNullException(nameof(workspaceProject));
-            }
-
-            if (other == null)
-            {
-                throw new ArgumentNullException(nameof(other));
-            }
-
-            WorkspaceProject = workspaceProject;
-
-            ComputedVersion = other.ComputedVersion;
-            FilePath = other.FilePath;
-            HostProject = other.HostProject;
-
-            Version = other.Version.GetNewerVersion();
-        }
-
-        private DefaultProjectSnapshot(ProjectSnapshotUpdateContext update, DefaultProjectSnapshot other)
+        public DefaultProjectSnapshot(ProjectSnapshotUpdateContext update, DefaultProjectSnapshot other, ProjectSnapshotStateDifference difference)
         {
             if (update == null)
             {
@@ -84,86 +84,100 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 throw new ArgumentNullException(nameof(other));
             }
 
-            ComputedVersion = update.Version;
+            State = other.State;
+            _projectEngine = other._projectEngine;
 
-            FilePath = other.FilePath;
-            HostProject = other.HostProject;
-            WorkspaceProject = other.WorkspaceProject;
-
-            // This doesn't represent a new version of the underlying data. Keep the same version.
-            Version = other.Version;
+            if (difference == ProjectSnapshotStateDifference.None ||
+                difference == ProjectSnapshotStateDifference.DocumentsChanged)
+            {
+                // Mark the computed as up to date if there are no project-level changes.
+                _computedState = new ProjectSnapshotComputedState(update, Version);
+            }
+            else
+            {
+                // Use the new computed state, but stay dirty if the project has changed.
+                _computedState = new ProjectSnapshotComputedState(update);
+            }
         }
 
         public override RazorConfiguration Configuration => HostProject.Configuration;
 
-        public override string FilePath { get; }
+        public override IReadOnlyList<RazorDocument> Documents => State.HostProject.Documents;
 
-        public HostProject HostProject { get; }
+        public override string FilePath => State.HostProject.FilePath;
+
+        public HostProject HostProject => State.HostProject;
 
         public override bool IsInitialized => WorkspaceProject != null;
 
-        public override VersionStamp Version { get; }
+        public override IReadOnlyList<TagHelperDescriptor> TagHelpers => _computedState?.TagHelpers ?? Array.Empty<TagHelperDescriptor>();
 
-        public override Project WorkspaceProject { get; }
+        public override VersionStamp Version => State.Version;
 
-        // This is the version that the computed state is based on.
-        public VersionStamp? ComputedVersion { get; set; }
+        public override Project WorkspaceProject => State.WorkspaceProject;
+        
+        public VersionStamp? ComputedVersion => _computedState?.Version;
 
         // We know the project is dirty if we don't have a computed result, or it was computed for a different version.
         // Since the PSM updates the snapshots synchronously, the snapshot can never be older than the computed state.
-        public bool IsDirty => ComputedVersion == null || ComputedVersion.Value != Version;
+        public bool IsProjectDirty =>  ComputedVersion != Version;
 
-        public ProjectSnapshotUpdateContext CreateUpdateContext()
-        {
-            return new ProjectSnapshotUpdateContext(FilePath, HostProject, WorkspaceProject, Version);
-        }
+        public ProjectSnapshotState State { get; }
 
-        public DefaultProjectSnapshot WithHostProject(HostProject hostProject)
+        public override RazorProjectEngine GetCurrentProjectEngine()
         {
-            if (hostProject == null)
+            var projectEngine = _projectEngine.Value;
+
+            if (ComputedVersion.HasValue)
             {
-                throw new ArgumentNullException(nameof(hostProject));
+                // Make sure the tag helpers are no older than the ones we know about.
+                var feature = projectEngine.EngineFeatures.OfType<ComputedTagHelperFeature>().Single();
+                lock (feature.Lock)
+                {
+                    if (feature.ComputedVersion.GetNewerVersion(ComputedVersion.Value) != feature.ComputedVersion)
+                    {
+                        // We have a newer version, update the feature.
+                        feature.ComputedVersion = ComputedVersion.Value;
+                        feature.TagHelpers = TagHelpers;
+                    }
+                }
             }
 
-            return new DefaultProjectSnapshot(hostProject, this);
+            return projectEngine;
         }
 
-        public DefaultProjectSnapshot RemoveWorkspaceProject()
+        private RazorProjectEngine CreateProjectEngine()
         {
-            // We want to get rid of all of the computed state since it's not really valid.
-            return new DefaultProjectSnapshot(HostProject, null, Version.GetNewerVersion());
-        }
-
-        public DefaultProjectSnapshot WithWorkspaceProject(Project workspaceProject)
-        {
-            if (workspaceProject == null)
+            var factory = State.Services.GetRequiredService<ProjectSnapshotProjectEngineFactory>();
+            return factory.Create(this, builder =>
             {
-                throw new ArgumentNullException(nameof(workspaceProject));
-            }
-
-            return new DefaultProjectSnapshot(workspaceProject, this);
+                // Allow the original snapshot to create the engine. Newer snapshots will update
+                // the feature.
+                builder.Features.Add(new ComputedTagHelperFeature()
+                {
+                    TagHelpers = TagHelpers,
+                    ComputedVersion = ComputedVersion == null ? VersionStamp.Default : ComputedVersion.Value,
+                });
+            });
         }
 
-        public DefaultProjectSnapshot WithComputedUpdate(ProjectSnapshotUpdateContext update)
+        private class ComputedTagHelperFeature : ITagHelperFeature
         {
-            if (update == null)
+            public object Lock = new object();
+
+            public RazorEngine Engine { get; set; }
+
+            public IReadOnlyList<TagHelperDescriptor> TagHelpers { get; set; }
+
+            public VersionStamp ComputedVersion { get; set; }
+
+            public IReadOnlyList<TagHelperDescriptor> GetDescriptors()
             {
-                throw new ArgumentNullException(nameof(update));
+                lock (Lock)
+                {
+                    return TagHelpers;
+                }
             }
-
-            return new DefaultProjectSnapshot(update, this);
-        }
-
-        public bool HasConfigurationChanged(DefaultProjectSnapshot original)
-        {
-            if (original == null)
-            {
-                throw new ArgumentNullException(nameof(original));
-            }
-
-            // We don't have any computed state right now, so treat all background updates as
-            // significant.
-            return !object.Equals(ComputedVersion, original.ComputedVersion);
         }
     }
 }

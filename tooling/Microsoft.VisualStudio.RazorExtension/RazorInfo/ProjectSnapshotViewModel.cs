@@ -2,8 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 #if RAZOR_EXTENSION_DEVELOPER_MODE
+using System;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Razor.ProjectSystem;
 
@@ -20,7 +23,10 @@ namespace Microsoft.VisualStudio.RazorExtension.RazorInfo
             {
                 new PropertyViewModel("Razor Language Version", project.Configuration?.LanguageVersion.ToString()),
                 new PropertyViewModel("Configuration Name", $"{project.Configuration?.ConfigurationName} ({project.Configuration?.GetType().Name ?? "unknown"})"),
-                new PropertyViewModel("Workspace Project", project.WorkspaceProject?.Name)
+                new PropertyViewModel("Extensions", $"{string.Join(", ", project.Configuration?.Extensions.Select(e => e.ExtensionName) ?? new [] { "unknown" })}"),
+                new PropertyViewModel("Workspace Project", project.WorkspaceProject?.Name),
+                new PropertyViewModel("Documents", FormatDocuments(project, 40)),
+                new PropertyViewModel("Tag Helpers", FormatTagHelpers(project, 40)),
             };
         }
 
@@ -31,6 +37,60 @@ namespace Microsoft.VisualStudio.RazorExtension.RazorInfo
         public ProjectId Id { get; }
 
         public ObservableCollection<PropertyViewModel> Properties { get; }
+
+        private static string FormatDocuments(ProjectSnapshot project, int desiredLength)
+        {
+            var count = $"(Count={project.Documents.Count})";
+            if (project.Documents.Count == 0)
+            {
+                return count;
+            }
+
+            var builder = new StringBuilder();
+            for (var i = 0; i < project.Documents.Count; i++)
+            {
+                builder.Append(project.Documents[i].TargetPath);
+                builder.Append(" ");
+            }
+
+            if (builder.Length > desiredLength + count.Length + 1)
+            {
+                builder.Length = desiredLength - count.Length - 4;
+                builder.Append("...");
+            }
+
+            builder.Append(" ");
+            builder.Append(count);
+
+            return builder.ToString();
+        }
+
+        private static string FormatTagHelpers(ProjectSnapshot project, int desiredLength)
+        {
+            var count = $"(Count={project.TagHelpers.Count})";
+            if (project.Documents.Count == 0)
+            {
+                return count;
+            }
+
+            var builder = new StringBuilder();
+            for (var i = 0; i < project.TagHelpers.Count; i++)
+            {
+                builder.Append(project.TagHelpers[i].DisplayName);
+                builder.Append(" ");
+            }
+
+            if (builder.Length > desiredLength + count.Length + 1)
+            {
+                builder.Length = desiredLength - count.Length - 4;
+                builder.Append("...");
+            }
+
+            builder.Append(" ");
+            builder.Append(count);
+
+            return builder.ToString();
+        }
     }
 }
 #endif

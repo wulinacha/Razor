@@ -5,9 +5,14 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 {
     internal enum ProjectChangeKind
     {
-        Added,
-        Removed,
-        Changed,
+        ProjectAdded,
+        ProjectRemoved,
+
+        // A 'project' change can also include more innocuous changes like document add/removes.
+        // Consumers should assume that when project changed is fired, they should not cache any
+        // state.
+        ProjectChanged,
+        DocumentsChanged,
         TagHelpersChanged,
     }
 }

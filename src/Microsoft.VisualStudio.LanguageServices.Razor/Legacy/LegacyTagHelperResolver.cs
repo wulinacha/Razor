@@ -43,7 +43,7 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor
             }
 
             var projectManager = _workspace.Services.GetLanguageServices(RazorLanguage.Name).GetRequiredService<ProjectSnapshotManager>();
-            var projectSnapshot = projectManager.GetProjectWithFilePath(project.FilePath);
+            var projectSnapshot = projectManager.GetLoadedProject(project.FilePath);
             if (projectSnapshot == null)
             {
                 return Task.FromResult(TagHelperResolutionResult.Empty);
@@ -59,7 +59,10 @@ namespace Microsoft.VisualStudio.LanguageServices.Razor
             var latest = _workspace.CurrentSolution.GetProject(projectSnapshot.WorkspaceProject.Id) ?? projectSnapshot.WorkspaceProject;
             if (projectSnapshot.WorkspaceProject != latest)
             {
-                projectSnapshot = ((DefaultProjectSnapshot)projectSnapshot).WithWorkspaceProject(latest);
+                var state = ((DefaultProjectSnapshot)projectSnapshot).State.WithWorkspaceProject(latest);
+                var difference = state.ComputeDifferenceFrom(((DefaultProjectSnapshot)projectSnapshot).State);
+
+                projectSnapshot = new DefaultProjectSnapshot(state, (DefaultProjectSnapshot)projectSnapshot, difference);
             }
             
             var resolver = _workspace.Services.GetLanguageServices(RazorLanguage.Name).GetRequiredService<TagHelperResolver>();

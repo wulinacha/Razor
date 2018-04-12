@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -55,13 +56,22 @@ namespace Microsoft.CodeAnalysis.Remote.Razor
 
             public override RazorConfiguration Configuration { get; }
 
+            public override IReadOnlyList<RazorDocument> Documents { get; }
+
             public override string FilePath { get; }
 
             public override bool IsInitialized { get; }
 
             public override VersionStamp Version { get; }
 
+            public override IReadOnlyList<TagHelperDescriptor> TagHelpers { get; }
+
             public override Project WorkspaceProject { get; }
+
+            public override RazorProjectEngine GetCurrentProjectEngine()
+            {
+                throw new NotImplementedException();
+            }
         }
     }
 }

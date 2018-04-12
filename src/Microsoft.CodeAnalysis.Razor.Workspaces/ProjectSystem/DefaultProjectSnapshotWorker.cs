@@ -10,15 +10,22 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
     internal class DefaultProjectSnapshotWorker : ProjectSnapshotWorker
     {
         private readonly ForegroundDispatcher _foregroundDispatcher;
+        private readonly TagHelperResolver _tagHelperResolver;
 
-        public DefaultProjectSnapshotWorker(ForegroundDispatcher foregroundDispatcher)
+        public DefaultProjectSnapshotWorker(ForegroundDispatcher foregroundDispatcher, TagHelperResolver tagHelperResolver)
         {
             if (foregroundDispatcher == null)
             {
                 throw new ArgumentNullException(nameof(foregroundDispatcher));
             }
 
+            if (tagHelperResolver == null)
+            {
+                throw new ArgumentNullException(nameof(tagHelperResolver));
+            }
+
             _foregroundDispatcher = foregroundDispatcher;
+            _tagHelperResolver = tagHelperResolver;
         }
 
         public override Task ProcessUpdateAsync(ProjectSnapshotUpdateContext update, CancellationToken cancellationToken = default(CancellationToken))
@@ -37,15 +44,16 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             return ProjectUpdatesCoreAsync(update);
         }
 
-        protected virtual void OnProcessingUpdate()
+        protected virtual async Task OnProcessingUpdate(ProjectSnapshotUpdateContext update)
         {
+            var tagHelpers = await _tagHelperResolver.GetTagHelpersAsync(update.Snapshot);
+            update.TagHelpers = tagHelpers.Descriptors;
         }
 
-        private Task ProjectUpdatesCoreAsync(object state)
+        private async Task ProjectUpdatesCoreAsync(object state)
         {
-            OnProcessingUpdate();
-
-            return Task.CompletedTask;
+            var update = (ProjectSnapshotUpdateContext)state;
+            await OnProcessingUpdate(update);
         }
     }
 }

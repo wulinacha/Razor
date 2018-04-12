@@ -1,6 +1,7 @@
 ﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -50,9 +51,9 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             ProjectNumberTwo = SolutionWithTwoProjects.GetProject(projectId2);
             ProjectNumberThree = SolutionWithOneProject.GetProject(projectId3);
 
-            HostProjectOne = new HostProject("One.csproj", FallbackRazorConfiguration.MVC_1_1);
-            HostProjectTwo = new HostProject("Two.csproj", FallbackRazorConfiguration.MVC_1_1);
-            HostProjectThree = new HostProject("Three.csproj", FallbackRazorConfiguration.MVC_1_1);
+            HostProjectOne = new HostProject("One.csproj", FallbackRazorConfiguration.MVC_1_1, Array.Empty<RazorDocument>());
+            HostProjectTwo = new HostProject("Two.csproj", FallbackRazorConfiguration.MVC_1_1, Array.Empty<RazorDocument>());
+            HostProjectThree = new HostProject("Three.csproj", FallbackRazorConfiguration.MVC_1_1, Array.Empty<RazorDocument>());
         }
 
         private HostProject HostProjectOne { get; }
@@ -220,8 +221,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 
             protected override void NotifyBackgroundWorker(ProjectSnapshotUpdateContext context)
             {
-                Assert.NotNull(context.HostProject);
-                Assert.NotNull(context.WorkspaceProject);
+                Assert.NotNull(context.Snapshot);
+                Assert.NotNull(context.Snapshot.WorkspaceProject);
             }
         }
 

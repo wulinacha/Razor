@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using Microsoft.AspNetCore.Razor.Language;
 
 namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 {
@@ -27,6 +28,29 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
     internal class DefaultProjectSnapshotManager : ProjectSnapshotManagerBase
     {
         public override event EventHandler<ProjectChangeEventArgs> Changed;
+
+        // Changes that should cause background work.
+        private readonly ProjectSnapshotStateDifference StartBackgroundWorkerMask =
+            ProjectSnapshotStateDifference.ConfigurationChanged |
+            ProjectSnapshotStateDifference.WorkspaceProjectAdded |
+            ProjectSnapshotStateDifference.WorkspaceProjectChanged |
+            ProjectSnapshotStateDifference.WorkspaceProjectRemoved;
+
+        private readonly ProjectSnapshotStateDifference NotifyProjectChangedMask =
+            ProjectSnapshotStateDifference.ConfigurationChanged |
+            ProjectSnapshotStateDifference.WorkspaceProjectAdded |
+            ProjectSnapshotStateDifference.WorkspaceProjectRemoved;
+
+        private readonly ProjectSnapshotStateDifference NotifyDocumentsChangedChangedMask =
+            ProjectSnapshotStateDifference.DocumentsChanged;
+
+        private readonly ProjectSnapshotStateDifference RejectComputedUpdateMask =
+            ProjectSnapshotStateDifference.ConfigurationChanged |
+            ProjectSnapshotStateDifference.WorkspaceProjectAdded |
+            ProjectSnapshotStateDifference.WorkspaceProjectRemoved;
+
+        private readonly ProjectSnapshotStateDifference AcceptComputedUpdateDirtyMask =
+            ProjectSnapshotStateDifference.WorkspaceProjectChanged;
 
         private readonly ErrorReporter _errorReporter;
         private readonly ForegroundDispatcher _foregroundDispatcher;
@@ -95,6 +119,31 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 
         public override Workspace Workspace { get; }
 
+        public override ProjectSnapshot GetLoadedProject(string filePath)
+        {
+            if (filePath == null)
+            {
+                throw new ArgumentNullException(nameof(filePath));
+            }
+
+            _foregroundDispatcher.AssertForegroundThread();
+
+            _projects.TryGetValue(filePath, out var project);
+            return project;
+        }
+
+        public override ProjectSnapshot GetOrCreateProject(string filePath)
+        {
+            if (filePath == null)
+            {
+                throw new ArgumentNullException(nameof(filePath));
+            }
+
+            _foregroundDispatcher.AssertForegroundThread();
+
+            return GetLoadedProject(filePath) ?? new EphemeralProjectSnapshot(Workspace.Services, filePath);
+        }
+
         public override void ProjectUpdated(ProjectSnapshotUpdateContext update)
         {
             if (update == null)
@@ -104,30 +153,43 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 
             _foregroundDispatcher.AssertForegroundThread();
             
-            if (_projects.TryGetValue(update.WorkspaceProject.FilePath, out var original))
+            if (_projects.TryGetValue(update.Snapshot.FilePath, out var current))
             {
-                if (!original.IsInitialized)
+                if (!current.IsInitialized)
                 {
-                    // If the project has been uninitialized, just ignore the update. 
+                    // If the project has been uninitialized, just ignore the update.
                     return;
                 }
 
-                // This is an update to the project's computed values, so everything should be overwritten
-                var snapshot = original.WithComputedUpdate(update);
-                _projects[update.WorkspaceProject.FilePath] = snapshot;
+                DefaultProjectSnapshot snapshot;
 
-                if (snapshot.IsDirty)
+                // This is an update the computed values, but we need to know if it's still value. It's possible
+                // that the that the project has changed and this is now invalid.
+                var difference = current.State.ComputeDifferenceFrom(((DefaultProjectSnapshot)update.Snapshot).State);
+                if ((difference & RejectComputedUpdateMask) != 0)
                 {
-                    // It's possible that the snapshot can still be dirty if we got a project update while computing state in
-                    // the background. We need to trigger the background work to asynchronously compute the effect of the updates.
-                    NotifyBackgroundWorker(snapshot.CreateUpdateContext());
+                    // The configuration has changed in a fundamental way, ignore the update and recalculate.
+                    NotifyBackgroundWorker(new ProjectSnapshotUpdateContext(current));
+                    return;
+                }
+                else if ((difference & AcceptComputedUpdateDirtyMask) != 0)
+                {
+                    // The project has changed, but the update is still value. Accept, and queue an update.
+                    snapshot = new DefaultProjectSnapshot(update, current, difference);
+                    _projects[current.FilePath] = snapshot;
+
+                    NotifyBackgroundWorker(new ProjectSnapshotUpdateContext(snapshot));
+                }
+                else
+                {
+                    // The project has note changed in a significant way accept.
+                    snapshot = new DefaultProjectSnapshot(update, current, difference);
+                    _projects[current.FilePath] = snapshot;
                 }
 
-                // Now we need to know if the changes that we applied are significant. If that's the case then 
-                // we need to notify listeners.
-                if (snapshot.HasConfigurationChanged(original))
+                if (HaveTagHelpersChanged(current, snapshot))
                 {
-                    NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.Changed));
+                    NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.TagHelpersChanged));
                 }
             }
         }
@@ -151,17 +213,18 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             // So if possible find a WorkspaceProject.
             var workspaceProject = GetWorkspaceProject(hostProject.FilePath);
 
-            var snapshot = new DefaultProjectSnapshot(hostProject, workspaceProject);
+            var state = new ProjectSnapshotState(Workspace.Services, hostProject, workspaceProject);
+            var snapshot = new DefaultProjectSnapshot(state);
             _projects[hostProject.FilePath] = snapshot;
 
-            if (snapshot.IsInitialized && snapshot.IsDirty)
+            if (snapshot.IsInitialized)
             {
                 // Start computing background state if the project is fully initialized.
-                NotifyBackgroundWorker(snapshot.CreateUpdateContext());
+                NotifyBackgroundWorker(new ProjectSnapshotUpdateContext(snapshot));
             }
 
             // We need to notify listeners about every project add.
-            NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.Added));
+            NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.ProjectAdded));
         }
 
         public override void HostProjectChanged(HostProject hostProject)
@@ -175,20 +238,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 
             if (_projects.TryGetValue(hostProject.FilePath, out var original))
             {
-                // Doing an update to the project should keep computed values, but mark the project as dirty if the
-                // underlying project is newer.
-                var snapshot = original.WithHostProject(hostProject);
-                _projects[hostProject.FilePath] = snapshot;
-
-                if (snapshot.IsInitialized && snapshot.IsDirty)
-                {
-                    // Start computing background state if the project is fully initialized.
-                    NotifyBackgroundWorker(snapshot.CreateUpdateContext());
-                }
-
-                // Notify listeners right away because if the HostProject changes then it's likely that the Razor
-                // configuration changed.
-                NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.Changed));
+                var state = original.State.WithHostProject(hostProject);
+                ProcessChangeForProject(original, state);
             }
         }
 
@@ -206,7 +257,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 _projects.Remove(hostProject.FilePath);
 
                 // We need to notify listeners about every project removal.
-                NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.Removed));
+                NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.ProjectRemoved));
             }
         }
 
@@ -232,19 +283,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 // found one in the past just ignore this one.
                 if (original.WorkspaceProject == null)
                 {
-                    var snapshot = original.WithWorkspaceProject(workspaceProject);
-                    _projects[workspaceProject.FilePath] = snapshot;
-
-                    if (snapshot.IsInitialized && snapshot.IsDirty)
-                    {
-                        // We don't need to notify listeners yet because we don't have any **new** computed state. 
-                        //
-                        // However we do need to trigger the background work to asynchronously compute the effect of the updates.
-                        NotifyBackgroundWorker(snapshot.CreateUpdateContext());
-                    }
-
-                    // Notify listeners right away since WorkspaceProject was just added, the project is now initialized.
-                    NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.Changed));
+                    var state = original.State.WithWorkspaceProject(workspaceProject);
+                    ProcessChangeForProject(original, state);
                 }
             }
         }
@@ -269,17 +309,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 (original.WorkspaceProject == null ||
                 original.WorkspaceProject.Id == workspaceProject.Id))
             {
-                // Doing an update to the project should keep computed values, but mark the project as dirty if the
-                // underlying project is newer.
-                var snapshot = original.WithWorkspaceProject(workspaceProject);
-                _projects[workspaceProject.FilePath] = snapshot;
-
-                if (snapshot.IsInitialized && snapshot.IsDirty)
-                {
-                    // We don't need to notify listeners yet because we don't have any **new** computed state. However we do 
-                    // need to trigger the background work to asynchronously compute the effect of the updates.
-                    NotifyBackgroundWorker(snapshot.CreateUpdateContext());
-                }
+                var state = original.State.WithWorkspaceProject(workspaceProject);
+                ProcessChangeForProject(original, state);
             }
         }
 
@@ -306,7 +337,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                     return;
                 }
 
-
+                ProjectSnapshotState state;
                 DefaultProjectSnapshot snapshot;
 
                 // So if the WorkspaceProject got removed, we should double check to make sure that there aren't others
@@ -315,30 +346,21 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 if (otherWorkspaceProject != null && otherWorkspaceProject.Id != workspaceProject.Id)
                 {
                     // OK there's another WorkspaceProject, use that.
-                    //
-                    // Doing an update to the project should keep computed values, but mark the project as dirty if the
-                    // underlying project is newer.
-                    snapshot = original.WithWorkspaceProject(otherWorkspaceProject);
-                    _projects[workspaceProject.FilePath] = snapshot;
-
-                    if (snapshot.IsInitialized && snapshot.IsDirty)
-                    {
-                        // We don't need to notify listeners yet because we don't have any **new** computed state. However we do 
-                        // need to trigger the background work to asynchronously compute the effect of the updates.
-                        NotifyBackgroundWorker(snapshot.CreateUpdateContext());
-                    }
-
-                    // Notify listeners of a change because it's a different WorkspaceProject.
-                    NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.Changed));
-
+                    state = original.State.WithWorkspaceProject(otherWorkspaceProject);
+                    ProcessChangeForProject(original, state);
                     return;
                 }
+                else
+                {
+                    state = original.State.WithWorkspaceProject(null);
+                    var difference = state.ComputeDifferenceFrom(original.State);
 
-                snapshot = original.RemoveWorkspaceProject();
-                _projects[workspaceProject.FilePath] = snapshot;
+                    snapshot = new DefaultProjectSnapshot(state, original, difference);
+                    _projects[workspaceProject.FilePath] = snapshot;
 
-                // Notify listeners of a change because we've removed computed state.
-                NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.Changed));
+                    // Notify listeners of a change because we've removed computed state.
+                    NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.ProjectChanged));
+                }
             }
         }
 
@@ -369,8 +391,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 throw new ArgumentNullException(nameof(exception));
             }
 
-            var project = hostProject?.FilePath == null ? null : this.GetProjectWithFilePath(hostProject.FilePath);
-            _errorReporter.ReportError(exception, project);
+            var snapshot = hostProject?.FilePath == null ? null : GetLoadedProject(hostProject.FilePath);
+            _errorReporter.ReportError(exception, snapshot);
         }
 
         public override void ReportError(Exception exception, Project workspaceProject)
@@ -426,6 +448,49 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             {
                 handler(this, e);
             }
+        }
+
+        private void ProcessChangeForProject(DefaultProjectSnapshot original, ProjectSnapshotState state)
+        {
+            Debug.Assert(state.HostProject != null);
+
+            var difference = state.ComputeDifferenceFrom(original.State);
+
+            var snapshot = new DefaultProjectSnapshot(state, original, difference);
+            _projects[original.FilePath] = snapshot;
+
+            if (snapshot.IsInitialized && (difference & StartBackgroundWorkerMask) != 0)
+            {
+                NotifyBackgroundWorker(new ProjectSnapshotUpdateContext(snapshot));
+            }
+
+            // Notify listeners for all HostProject changes, in order of impact.
+            if ((difference & NotifyProjectChangedMask) != 0)
+            {
+                NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.ProjectChanged));
+            }
+            else if ((difference & NotifyDocumentsChangedChangedMask) != 0)
+            {
+                NotifyListeners(new ProjectChangeEventArgs(snapshot, ProjectChangeKind.DocumentsChanged));
+            }
+        }
+
+        private bool HaveTagHelpersChanged(ProjectSnapshot older, ProjectSnapshot newer)
+        {
+            if (older.TagHelpers.Count != newer.TagHelpers.Count)
+            {
+                return true;
+            }
+
+            for (var i = 0; i < older.TagHelpers.Count; i++)
+            {
+                if (!TagHelperDescriptorComparer.Default.Equals(older.TagHelpers[i], newer.TagHelpers[i]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

@@ -16,8 +16,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
     {
         public ProjectSnapshotWorkerQueueTest()
         {
-            HostProject1 = new HostProject("Test1.csproj", FallbackRazorConfiguration.MVC_1_0);
-            HostProject2 = new HostProject("Test2.csproj", FallbackRazorConfiguration.MVC_1_0);
+            HostProject1 = new HostProject("Test1.csproj", FallbackRazorConfiguration.MVC_1_0, Array.Empty<RazorDocument>());
+            HostProject2 = new HostProject("Test2.csproj", FallbackRazorConfiguration.MVC_1_0, Array.Empty<RazorDocument>());
 
             Workspace = TestWorkspace.Create();
 
@@ -75,7 +75,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             };
 
             // Act & Assert
-            queue.Enqueue(projectManager.GetSnapshot(HostProject1).CreateUpdateContext());
+            queue.Enqueue(new ProjectSnapshotUpdateContext(projectManager.GetSnapshot(HostProject1)));
 
             Assert.True(queue.IsScheduledOrRunning, "Queue should be scheduled during Enqueue");
             Assert.True(queue.HasPendingNotifications, "Queue should have a notification created during Enqueue");
@@ -111,7 +111,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             };
 
             // Act & Assert
-            queue.Enqueue(projectManager.GetSnapshot(HostProject1).CreateUpdateContext());
+            queue.Enqueue(new ProjectSnapshotUpdateContext(projectManager.GetSnapshot(HostProject1)));
 
             Assert.True(queue.IsScheduledOrRunning, "Queue should be scheduled during Enqueue");
             Assert.True(queue.HasPendingNotifications, "Queue should have a notification created during Enqueue");
@@ -124,7 +124,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             Assert.True(queue.IsScheduledOrRunning, "Worker should be processing now");
             Assert.False(queue.HasPendingNotifications, "Worker should have taken all notifications");
 
-            queue.Enqueue(projectManager.GetSnapshot(HostProject2).CreateUpdateContext());
+            queue.Enqueue(new ProjectSnapshotUpdateContext(projectManager.GetSnapshot(HostProject2)));
 
             Assert.True(queue.HasPendingNotifications); // Now we should see the worker restart when it finishes.
 
@@ -171,8 +171,8 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 
             protected override void NotifyBackgroundWorker(ProjectSnapshotUpdateContext context)
             {
-                Assert.NotNull(context.HostProject);
-                Assert.NotNull(context.WorkspaceProject);
+                Assert.NotNull(context.Snapshot);
+                Assert.NotNull(context.Snapshot.WorkspaceProject);
             }
         }
 

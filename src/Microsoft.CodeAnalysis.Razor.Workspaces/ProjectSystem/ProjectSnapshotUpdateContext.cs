@@ -9,35 +9,18 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 {
     internal class ProjectSnapshotUpdateContext
     {
-        public ProjectSnapshotUpdateContext(string filePath, HostProject hostProject, Project workspaceProject, VersionStamp version)
+        public ProjectSnapshotUpdateContext(ProjectSnapshot snapshot)
         {
-            if (filePath == null)
+            if (snapshot == null)
             {
-                throw new ArgumentNullException(nameof(filePath));
+                throw new ArgumentNullException(nameof(snapshot));
             }
 
-            if (hostProject == null)
-            {
-                throw new ArgumentNullException(nameof(hostProject));
-            }
-
-            if (workspaceProject == null)
-            {
-                throw new ArgumentNullException(nameof(workspaceProject));
-            }
-
-            FilePath = filePath;
-            HostProject = hostProject;
-            WorkspaceProject = workspaceProject;
-            Version = version;
+            Snapshot = snapshot;
         }
 
-        public string FilePath { get; }
+        public ProjectSnapshot Snapshot { get; }
 
-        public HostProject HostProject { get; }
-
-        public Project WorkspaceProject { get; }
-
-        public VersionStamp Version { get; }
+        public IReadOnlyList<TagHelperDescriptor> TagHelpers { get; set; } = Array.Empty<TagHelperDescriptor>();
     }
 }

@@ -105,7 +105,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
             {
                 // We only want to store the last 'seen' version of any given project. That way when we pick one to process
                 // it's always the best version to use.
-                _projects[context.FilePath] = context;
+                _projects[context.Snapshot.FilePath] = context;
 
                 StartWorker();
             }
@@ -195,7 +195,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
                 }
                 else
                 {
-                    _projectManager.ReportError(update.exception, update.context?.WorkspaceProject);
+                    _projectManager.ReportError(update.exception, update.context?.Snapshot.WorkspaceProject);
                 }
             }
         }

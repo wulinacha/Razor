@@ -78,7 +78,7 @@ namespace Microsoft.VisualStudio.RazorExtension.RazorInfo
         {
             switch (e.Kind)
             {
-                case ProjectChangeKind.Added:
+                case ProjectChangeKind.ProjectAdded:
                     {
                         var added = new ProjectViewModel(e.Project.FilePath)
                         {
@@ -94,7 +94,7 @@ namespace Microsoft.VisualStudio.RazorExtension.RazorInfo
                         break;
                     }
 
-                case ProjectChangeKind.Removed:
+                case ProjectChangeKind.ProjectRemoved:
                     {
                         ProjectViewModel removed = null;
                         for (var i = DataContext.Projects.Count - 1; i >= 0; i--)
@@ -116,7 +116,9 @@ namespace Microsoft.VisualStudio.RazorExtension.RazorInfo
                         break;
                     }
 
-                case ProjectChangeKind.Changed:
+                case ProjectChangeKind.ProjectChanged:
+                case ProjectChangeKind.DocumentsChanged:
+                case ProjectChangeKind.TagHelpersChanged:
                     {
                         ProjectViewModel changed = null;
                         for (var i = DataContext.Projects.Count - 1; i >= 0; i--)

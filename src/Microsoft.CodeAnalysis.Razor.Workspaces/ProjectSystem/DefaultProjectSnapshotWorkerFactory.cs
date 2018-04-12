@@ -1,13 +1,13 @@
 ﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using System;
 using System.Composition;
 using Microsoft.CodeAnalysis.Host;
 using Microsoft.CodeAnalysis.Host.Mef;
 
 namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 {
-    [Shared]
     [ExportLanguageServiceFactory(typeof(ProjectSnapshotWorker), RazorLanguage.Name)]
     internal class DefaultProjectSnapshotWorkerFactory : ILanguageServiceFactory
     {
@@ -18,7 +18,7 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
         {
             if (foregroundDispatcher == null)
             {
-                throw new System.ArgumentNullException(nameof(foregroundDispatcher));
+                throw new ArgumentNullException(nameof(foregroundDispatcher));
             }
 
             _foregroundDispatcher = foregroundDispatcher;
@@ -26,7 +26,9 @@ namespace Microsoft.CodeAnalysis.Razor.ProjectSystem
 
         public ILanguageService CreateLanguageService(HostLanguageServices languageServices)
         {
-            return new DefaultProjectSnapshotWorker(_foregroundDispatcher);
+            return new DefaultProjectSnapshotWorker(
+                _foregroundDispatcher,
+                languageServices.GetRequiredService<TagHelperResolver>());
         }
     }
 }
