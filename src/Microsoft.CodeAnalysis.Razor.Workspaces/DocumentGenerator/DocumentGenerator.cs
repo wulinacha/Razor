@@ -6,8 +6,8 @@ using System.Collections.Generic;
 using System.Composition;
 using System.Linq;
 using System.Threading;
+using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.CodeAnalysis.Razor.ProjectSystem;
-using Microsoft.CodeAnalysis.Text;
 
 namespace Microsoft.CodeAnalysis.Razor
 {
@@ -18,7 +18,7 @@ namespace Microsoft.CodeAnalysis.Razor
         private readonly Dictionary<string, ProjectEntry> _projects;
 
         private readonly object _lock;
-        private readonly Dictionary<string, DocumentEntry> _dirty;
+        private readonly Dictionary<string, (ProjectSnapshot, DocumentEntry)> _dirty;
         private Timer _timer;
 
         public DocumentGenerator()
@@ -27,7 +27,7 @@ namespace Microsoft.CodeAnalysis.Razor
             _projects = new Dictionary<string, ProjectEntry>(FilePathComparer.Instance);
 
             _lock = new object();
-            _dirty = new Dictionary<string, DocumentEntry>(FilePathComparer.Instance);
+            _dirty = new Dictionary<string, (ProjectSnapshot, DocumentEntry)>(FilePathComparer.Instance);
         }
 
         // Used in unit tests to control the timer delay.
@@ -73,7 +73,7 @@ namespace Microsoft.CodeAnalysis.Razor
             }
 
             fileEntry.Documents.Add(project.FilePath, documentEntry);
-            Enqueue(documentEntry);
+            Enqueue(projectEntry.ProjectSnapshot, documentEntry);
         }
 
         private void RemoveDocument(ProjectSnapshot project, RazorDocument document)
@@ -97,16 +97,22 @@ namespace Microsoft.CodeAnalysis.Razor
         private void SetDirty(ProjectSnapshot project, RazorDocument document)
         {
             var documentEntry = _projects[project.FilePath].Documents[document.FilePath];
-            documentEntry.KnownVersion = documentEntry.KnownVersion.GetNewerVersion();
 
-            Enqueue(documentEntry);
+            lock (documentEntry)
+            {
+                documentEntry.KnownVersion = documentEntry.KnownVersion.GetNewerVersion();
+            }
+
+            Enqueue(project, documentEntry);
         }
 
-        private void Enqueue(DocumentEntry documentEntry)
+        private void Enqueue(ProjectSnapshot project, DocumentEntry documentEntry)
         {
             lock (_lock)
             {
-                _dirty[documentEntry.FilePath] = documentEntry;
+                // The ProjectSnapshots get newer as time passes, so don't do anything
+                // fancy here, just replace the current entry if it exists.
+                _dirty[documentEntry.FilePath] = (project, documentEntry);
 
                 StartWorker();
             }
@@ -120,18 +126,36 @@ namespace Microsoft.CodeAnalysis.Razor
             }
         }
 
-        private async void Timer_Tick(object state) // Yeah, I know.
+        private void Timer_Tick(object state) // Yeah, I know.
         {
+            (ProjectSnapshot project, DocumentEntry documentEntry)[] work;
             lock (_lock)
             {
                 _timer.Change(Timeout.Infinite, Timeout.Infinite);
 
-                var work = _dirty.Values.ToArray();
+                work = _dirty.Values.ToArray();
                 _dirty.Clear();
             }
 
-            new SourceTextContainer.
+            for (var i = 0; i < work.Length; i++)
+            {
+                var project = work[i].project;
+                var documentEntry = work[i].documentEntry;
 
+                var version = documentEntry.KnownVersion;
+                var projectEngine = project.GetCurrentProjectEngine();
+                var item = projectEngine.FileSystem.GetItem(documentEntry.FilePath);
+                if (item.Exists)
+                {
+                    var result = projectEngine.ProcessDesignTime(item);
+
+                    lock (documentEntry)
+                    {
+                        documentEntry.ComputedVersion = documentEntry.KnownVersion;
+                        documentEntry.Generated = result.GetCSharpDocument();
+                    }
+                }
+            }
 
             lock (_lock)
             {
@@ -282,6 +306,8 @@ namespace Microsoft.CodeAnalysis.Razor
             public VersionStamp ComputedVersion { get; set; }
 
             public VersionStamp KnownVersion { get; set; }
+
+            public RazorCSharpDocument Generated { get; set; }
         }
     }
 }
